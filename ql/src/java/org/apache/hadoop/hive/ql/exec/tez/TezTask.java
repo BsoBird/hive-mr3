@@ -158,6 +158,9 @@ public class TezTask extends Task<TezWork> {
     if (exFromMr3 != null) {
       this.setException(exFromMr3);
     }
+    if (exFromMr3 == null) {
+      updateNumRows();
+    }
     return returnCode;
   }
 
