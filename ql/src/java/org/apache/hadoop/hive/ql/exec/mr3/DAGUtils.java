@@ -371,7 +371,14 @@ public class DAGUtils {
       MapWork mapWork = (MapWork) (mergeJoinWork.getMainWork());
       Vertex mergeVx = createMapVertex(vertexJobConf, mapWork, mr3ScratchDir, vertexType);
 
-      vertexJobConf.setClass("mapred.input.format.class", HiveInputFormat.class, InputFormat.class);
+      Class<?> inputFormatClass = vertexJobConf.getClass("mapred.input.format.class",
+              HiveInputFormat.class);
+      if (inputFormatClass != BucketizedHiveInputFormat.class &&
+              inputFormatClass != HiveInputFormat.class) {
+        // As of now only these two formats are supported.
+        inputFormatClass = HiveInputFormat.class;
+      }
+      vertexJobConf.setClass("mapred.input.format.class", inputFormatClass, InputFormat.class);
       // mapreduce.tez.input.initializer.serialize.event.payload should be set
       // to false when using this plug-in to avoid getting a serialized event at run-time.
       vertexJobConf.setBoolean("mapreduce.tez.input.initializer.serialize.event.payload", false);
@@ -383,7 +390,7 @@ public class DAGUtils {
         LOG.info("Going through each work and adding MultiMRInput");
 
         org.apache.tez.dag.api.DataSourceDescriptor dataSource=
-            MultiMRInput.createConfigBuilder(vertexJobConf, HiveInputFormat.class).build();
+            MultiMRInput.createConfigBuilder(vertexJobConf, inputFormatClass).build();
         DataSource mr3DataSource = MR3Utils.convertTezDataSourceDescriptor(dataSource);
         mergeVx.addDataSource(mapWork.getName(), mr3DataSource);
       }
@@ -450,8 +457,12 @@ public class DAGUtils {
       groupSplitsInInputInitializer = false;
       // grouping happens in execution phase. The input payload should not enable grouping here,
       // it will be enabled in the CustomVertex.
-      inputFormatClass = HiveInputFormat.class;
-      vertexJobConf.setClass("mapred.input.format.class", HiveInputFormat.class, InputFormat.class);
+      if (inputFormatClass != BucketizedHiveInputFormat.class &&
+              inputFormatClass != HiveInputFormat.class) {
+        // As of now only these two formats are supported.
+        inputFormatClass = HiveInputFormat.class;
+      }
+      vertexJobConf.setClass("mapred.input.format.class", inputFormatClass, InputFormat.class);
       // mapreduce.tez.input.initializer.serialize.event.payload should be set to false when using
       // this plug-in to avoid getting a serialized event at run-time.
       vertexJobConf.setBoolean("mapreduce.tez.input.initializer.serialize.event.payload", false);
