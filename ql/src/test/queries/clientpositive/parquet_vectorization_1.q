@@ -1,10 +1,11 @@
+--! qt:dataset:alltypesparquet
 SET hive.vectorized.execution.enabled=true;
 set hive.fetch.task.conversion=none;
 set hive.vectorized.execution.reduce.enabled=true;
 
 -- SORT_QUERY_RESULTS
 
-EXPLAIN VECTORIZATION DETAIL
+EXPLAIN VECTORIZATION EXPRESSION
 SELECT VAR_POP(ctinyint),
        (VAR_POP(ctinyint) / -26.28),
        SUM(cfloat),

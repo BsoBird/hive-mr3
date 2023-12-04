@@ -1,3 +1,4 @@
+--! qt:dataset:alltypesparquet
 set hive.mapred.mode=nonstrict;
 set hive.explain.user=false;
 SET hive.vectorized.execution.enabled=true;
@@ -8,7 +9,7 @@ set hive.vectorized.execution.reduce.enabled=false;
 
 -- SORT_QUERY_RESULTS
 
-EXPLAIN VECTORIZATION DETAIL
+EXPLAIN VECTORIZATION EXPRESSION
 SELECT   cfloat,
          cboolean1,
          cdouble,

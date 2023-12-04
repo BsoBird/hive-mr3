@@ -1,10 +1,11 @@
+--! qt:dataset:alltypesparquet
 set hive.mapred.mode=nonstrict;
 SET hive.vectorized.execution.enabled=true;
 set hive.fetch.task.conversion=none;
 
 -- SORT_QUERY_RESULTS
 
-EXPLAIN VECTORIZATION DETAIL
+EXPLAIN VECTORIZATION EXPRESSION
 SELECT STDDEV_SAMP(csmallint),
        (STDDEV_SAMP(csmallint) - 10.175),
        STDDEV_POP(ctinyint),

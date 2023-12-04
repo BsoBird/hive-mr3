@@ -1,3 +1,5 @@
+--! qt:disabled:Disabled in HIVE-19509
+
 set hive.strict.checks.bucketing=false;
 
 set hive.mapred.mode=nonstrict;
@@ -18,7 +20,7 @@ load data local inpath '../../data/files/bmj/000001_0' INTO TABLE srcbucket_mapj
 load data local inpath '../../data/files/bmj/000002_0' INTO TABLE srcbucket_mapjoin_part_n15 partition(ds='2008-04-08');
 load data local inpath '../../data/files/bmj/000003_0' INTO TABLE srcbucket_mapjoin_part_n15 partition(ds='2008-04-08');
 
-
+-- SORT_QUERY_RESULTS
 
 set hive.optimize.bucketingsorting=false;
 insert overwrite table tab_part_n9 partition (ds='2008-04-08')

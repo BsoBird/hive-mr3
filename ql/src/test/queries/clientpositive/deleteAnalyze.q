@@ -14,7 +14,7 @@ insert into table testdeci2_n0 values(1,12.123,12345.123,'desk1'),(2,123.123,123
 
 describe formatted testdeci2_n0;
 
-dfs -rmr ${system:test.tmp.dir}/testdeci2/000000_0;
+dfs -rm -r -f ${system:test.tmp.dir}/testdeci2/000000_0;
 
 describe formatted testdeci2_n0 amount;
 

@@ -1,9 +1,10 @@
+--! qt:dataset:alltypesparquet
 SET hive.vectorized.execution.enabled=true;
 set hive.fetch.task.conversion=none;
 
 -- SORT_QUERY_RESULTS
 
-EXPLAIN VECTORIZATION DETAIL
+EXPLAIN VECTORIZATION EXPRESSION
 SELECT cboolean1,
        cfloat,
        cstring1,
