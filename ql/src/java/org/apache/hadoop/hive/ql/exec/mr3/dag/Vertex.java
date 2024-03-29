@@ -323,4 +323,8 @@ public class Vertex {
   public ByteString getProcessorDescriptorPayload() {
     return processorDescriptor.getUserPayload();
   }
+
+  public Map<String, Pair<EntityDescriptor, EntityDescriptor>> getDataSinks() {
+    return dataSinks;
+  }
 }
