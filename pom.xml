@@ -25,6 +25,7 @@
   <packaging>pom</packaging>
   <name>Hive</name>
   <url>https://hive.apache.org</url>
+  <inceptionYear>2008</inceptionYear>
   <modules>
     <module>storage-api</module>
     <module>accumulo-handler</module>
@@ -226,6 +227,7 @@
     <spring.version>5.3.21</spring.version>
     <scala.version>2.12.18</scala.version>
     <mr3.version>1.10</mr3.version>
+    <project.build.outputTimestamp>2024-01-01T00:00:00Z</project.build.outputTimestamp>
   </properties>
   <repositories>
     <!-- This needs to be removed before checking in-->
