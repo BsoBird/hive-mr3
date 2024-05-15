@@ -126,6 +126,7 @@ class TestCompactorBase {
     if (driver != null) {
       driver.close();
     }
+    HiveConf.setLoadHiveServer2Config(false);
   }
 
   /**

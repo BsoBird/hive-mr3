@@ -120,6 +120,7 @@ public class TestClientSideAuthorizationProvider {
 
   @Test
   public void testSimplePrivileges() throws Exception {
+    HiveConf.setLoadHiveServer2Config(true);
     String dbName = getTestDbName();
     String tblName = getTestTableName();
 
