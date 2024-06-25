@@ -67,6 +67,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.conf.HiveConfForTest;
 import org.apache.hadoop.hive.metastore.PersistenceManagerProvider;
 import org.apache.hadoop.hive.ql.QueryPlan;
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
@@ -105,7 +106,7 @@ public class TestJdbcWithMiniHS2 {
   @Before
   public void setupBeforeClass() throws Exception {
     MiniHS2.cleanupLocalDir();
-    HiveConf conf = new HiveConf();
+    HiveConf conf = getNewHiveConf();
     dataFileDir = conf.get("test.data.files").replace('\\', '/').replace("c:", "");
     kvDataFilePath = new Path(dataFileDir, "kv1.txt");
 
@@ -203,7 +204,7 @@ public class TestJdbcWithMiniHS2 {
       }
     }
     stopMiniHS2();
-    HiveConf conf = new HiveConf();
+    HiveConf conf = getNewHiveConf();
     startMiniHS2(conf);
     openDefaultConnections();
     openTestConnections();
@@ -789,7 +790,7 @@ public class TestJdbcWithMiniHS2 {
   public void testSessionScratchDirs() throws Exception {
     // Stop HiveServer2
     stopMiniHS2();
-    HiveConf conf = new HiveConf();
+    HiveConf conf = getNewHiveConf();
     String userName;
     Path scratchDirPath;
     // Set a custom prefix for hdfs scratch dir path
@@ -857,7 +858,7 @@ public class TestJdbcWithMiniHS2 {
    */
   @Test
   public void testUdfWhiteBlackList() throws Exception {
-    HiveConf testConf = new HiveConf();
+    HiveConf testConf = getNewHiveConf();
     assertTrue(testConf.getVar(ConfVars.HIVE_SERVER2_BUILTIN_UDF_WHITELIST).isEmpty());
     // verify that udf in default whitelist can be executed
     Statement stmt = conDefault.createStatement();
@@ -893,6 +894,13 @@ public class TestJdbcWithMiniHS2 {
     restoreMiniHS2AndConnections();
   }
 
+  private static HiveConf getNewHiveConf() {
+    HiveConf conf = new HiveConfForTest(TestJdbcWithMiniHS2.class);
+    //TODO: HIVE-28284: TestJdbcWithMiniHS2/TestJdbcWithMiniHS2ErasureCoding to run on Tez
+    conf.setVar(HiveConf.ConfVars.HIVE_EXECUTION_ENGINE, "mr");
+    return conf;
+  }
+
   /** Test UDF blacklist
    *   - verify default value
    *   - verify udfs allowed with default blacklist
@@ -901,7 +909,7 @@ public class TestJdbcWithMiniHS2 {
    */
   @Test
   public void testUdfBlackList() throws Exception {
-    HiveConf testConf = new HiveConf();
+    HiveConf testConf = getNewHiveConf();
     assertTrue(testConf.getVar(ConfVars.HIVE_SERVER2_BUILTIN_UDF_BLACKLIST).isEmpty());
     Statement stmt = conDefault.createStatement();
     // verify that udf in default whitelist can be executed
@@ -932,7 +940,7 @@ public class TestJdbcWithMiniHS2 {
   public void testUdfBlackListOverride() throws Exception {
     stopMiniHS2();
     // setup whitelist
-    HiveConf testConf = new HiveConf();
+    HiveConf testConf = getNewHiveConf();
 
     Set<String> funcNames = FunctionRegistry.getFunctionNames();
     String funcNameStr = "";
@@ -968,7 +976,7 @@ public class TestJdbcWithMiniHS2 {
   public void testRootScratchDir() throws Exception {
     // Stop HiveServer2
     stopMiniHS2();
-    HiveConf conf = new HiveConf();
+    HiveConf conf = getNewHiveConf();
     String userName;
     Path scratchDirPath;
     conf.set("hive.exec.scratchdir", tmpDir + "/hs2");
@@ -1018,7 +1026,7 @@ public class TestJdbcWithMiniHS2 {
   public void testHttpHeaderSize() throws Exception {
     // Stop HiveServer2
     stopMiniHS2();
-    HiveConf conf = new HiveConf();
+    HiveConf conf = getNewHiveConf();
     conf.setIntVar(HiveConf.ConfVars.HIVE_SERVER2_THRIFT_HTTP_REQUEST_HEADER_SIZE, 1024);
     conf.setIntVar(HiveConf.ConfVars.HIVE_SERVER2_THRIFT_HTTP_RESPONSE_HEADER_SIZE, 1024);
     startMiniHS2(conf, true);
@@ -1088,7 +1096,7 @@ public class TestJdbcWithMiniHS2 {
   public void testHttpRetryOnServerIdleTimeout() throws Exception {
     // Stop HiveServer2
     stopMiniHS2();
-    HiveConf conf = new HiveConf();
+    HiveConf conf = getNewHiveConf();
     // Set server's idle timeout to a very low value
     conf.setVar(HiveConf.ConfVars.HIVE_SERVER2_THRIFT_HTTP_MAX_IDLE_TIME, "5000");
     startMiniHS2(conf, true);
