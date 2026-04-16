@@ -15,18 +15,18 @@ Map Side:
 │       ├── Key → BinarySortableSerializeWrite              │
 │       │         → HiveKey (BytesWritable)                │
 │       │                                                    │
-│       └── Value → LazyBinarySerializeWrite                │
+│       └── Value → LazyBinarySerializeWrite (or Fory)       │
 │                   → BytesWritable                          │
 └─────────────────────────────────────────────────────────────┘
-                          ↓ Shuffle (Network Transfer)
+                           ↓ Shuffle (Network Transfer)
 Reduce Side:
 ┌─────────────────────────────────────────────────────────────┐
 │  ReduceRecordSource                                        │
 │       │                                                    │
 │       ├── Key → BinarySortableDeserializeRead             │
-│       │         → VectorizedRowBatch                      │
+│       │         → VectorizedRowBatch                       │
 │       │                                                    │
-│       └── Value → LazyBinaryDeserializeRead               │
+│       └── Value → LazyBinaryDeserializeRead (or Fory)      │
 │                   → VectorizedRowBatch                      │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -37,10 +37,10 @@ Reduce Side:
 
 ```java
 // If a < b, then serialize(a)'s byte order < serialize(b)'s byte order
-// Can directly compare byte[] for sorting, no need to deserialize
+// Can directly compare byte[] for sorting without deserializing
 int 3 → [03 00 00 00]  // little-endian
 int 5 → [05 00 00 00]  // little-endian
-// Direct byte[] comparison: 03 < 05 → correctly sorted
+// Direct byte comparison: 03 < 05 → correctly sorted
 ```
 
 **Fory BinaryRow does NOT guarantee sort order**, therefore **Key must continue using BinarySortableSerDe**.
@@ -50,7 +50,7 @@ int 5 → [05 00 00 00]  // little-endian
 **LazyBinaryDeserializeRead supports lazy deserialization:**
 
 ```java
-// Can skip fields when not needed
+// Can skip fields when needed
 deserializeField(0);  // Only deserialize field 0
 skipField(1);          // Skip field 1
 deserializeField(2);  // Only deserialize field 2
@@ -83,7 +83,7 @@ SET hive.fory.shuffle.enabled=true;
 
 ---
 
-## 3. Implementation File清单
+## 3. Implementation File List
 
 ### 3.1 Serde Module (`serde/src/java/org/apache/hadoop/hive/serde2/fory/`)
 
@@ -223,16 +223,123 @@ if (useForyShuffle && foryValueDeserializeRead != null) {
 
 ---
 
-## 6. Current Limitations
+## 6. Current Progress
+
+### 6.1 Completed
+
+1. ✅ **Core Implementation Files** (8 files)
+   - `ForyShuffleSerDe.java` - Main SerDe
+   - `ForyShuffleUtils.java` - Type conversion utilities
+   - `ForyShuffleSerializeWrite.java` - Serialization writer
+   - `ForyShuffleDeserializeRead.java` - Deserialization reader
+   - `ForyShuffleVectorizedSerializeWrite.java` - Vectorized zero-copy serialization
+   - `ForyShuffleVectorizedDeserializeRead.java` - Vectorized zero-copy deserialization
+   - `ForyShuffleFactory.java` - Factory class
+   - `ForyShuffleConf.java` - Configuration class
+
+2. ✅ **Hive Core File Modifications**
+   - `VectorReduceSinkCommonOperator.java` - Added Fory Value serialization path
+   - `VectorReduceSinkEmptyKeyOperator.java` - Added Fory Value serialization path
+   - `ReduceRecordSource.java` - Added Fory Value deserialization path
+
+3. ✅ **Configuration**
+   - Root `pom.xml` added `fory.version`
+   - `serde/pom.xml` added `fory-core` dependency
+   - `ForyShuffleConf.java` provides `hive.fory.shuffle.enabled` configuration
+
+4. ✅ **Documentation**
+   - `hive-shuffle.md` - Complete design documentation
+
+### 6.2 Current Limitations
 
 1. **Key cannot use Fory**: Must keep BinarySortable to support sorting
-2. **Union type not fully supported**: Returns null for Union in ForyShuffleVectorizedDeserializeRead
-3. **Decimal parsing not optimized**: Still eager parsing, not zero-copy
+2. **Union type not supported**: Throws `HiveException` when encountered
+3. **Decimal deserialization is not zero-copy**: Must create HiveDecimal objects, cannot set raw values like INT/LONG
 4. **Needs actual testing**: No real performance test data
 
 ---
 
-## 7. Usage
+## 7. Decimal Support
+
+### 7.1 Fory Row Format Decimal Encoding
+
+Fory Row Format **does support Decimal type** using Arrow Decimal format:
+
+| Property | Value |
+|----------|-------|
+| **Storage Format** | Arrow Decimal Format |
+| **Fixed Length** | 32 bytes (`DECIMAL_BYTE_LENGTH = 32`) |
+| **Encoding** | Little-endian, stores unscaled value (BigInteger) |
+| **Max Precision** | 38 digits (`MAX_PRECISION = 38`) |
+| **Max Scale** | 18 digits (`MAX_SCALE = 18`) |
+
+### 7.2 Decimal Deserialization Implementation
+
+Implemented in `ForyShuffleVectorizedDeserializeRead.java`:
+
+```java
+// Constructor stores scale for each decimal column
+this.decimalScales = new int[numFields];
+for (int i = 0; i < numFields; i++) {
+    TypeInfo typeInfo = columnTypes.get(i);
+    if (typeInfo.getCategory() == Category.PRIMITIVE) {
+        PrimitiveTypeInfo pti = (PrimitiveTypeInfo) typeInfo;
+        if (pti.getPrimitiveCategory() == PrimitiveCategory.DECIMAL) {
+            decimalScales[i] = ((DecimalTypeInfo) pti).getScale();
+        }
+    }
+}
+
+// Use scale during deserialization
+case DECIMAL:
+    int decOffset = binaryRow.getFieldOffset(fieldIndex);
+    int decLen = binaryRow.getFieldLength(fieldIndex);
+    byte[] decBytes = binaryRow.getBytes();
+    int scale = decimalScales[fieldIndex];
+    HiveDecimal decimal = parseDecimal(decBytes, decOffset, decLen, scale);
+    ((DecimalColumnVector) cv).vector[rowIndex] =
+        new org.apache.hadoop.hive.common.type.HiveDecimalWritable(decimal);
+    break;
+```
+
+`parseDecimal()` method implementation:
+
+```java
+private HiveDecimal parseDecimal(byte[] bytes, int offset, int length, int scale) {
+    if (length != DECIMAL_BYTE_LENGTH) {
+        return HiveDecimal.ZERO;
+    }
+
+    // Fory stores decimal in little-endian byte order
+    byte[] littleEndianBytes = new byte[DECIMAL_BYTE_LENGTH];
+    for (int i = 0; i < DECIMAL_BYTE_LENGTH; i++) {
+        littleEndianBytes[i] = bytes[offset + DECIMAL_BYTE_LENGTH - 1 - i];
+    }
+
+    BigInteger unscaledValue = new BigInteger(1, littleEndianBytes);
+    BigDecimal bd = new BigDecimal(unscaledValue, scale);
+    return HiveDecimal.create(bd);
+}
+```
+
+### 7.3 Decimal Deserialization Limitations
+
+Although Decimal can now be correctly deserialized, **zero-copy is not possible** because:
+
+1. **HiveDecimal object must be created**: Even with correct byte parsing, must create `HiveDecimal` object
+2. **HiveDecimalWritable must be allocated**: `DecimalColumnVector.vector[]` stores `HiveDecimalWritable` objects
+3. **Cannot set raw values like INT/LONG**: INT/LONG can set primitive types directly, Decimal must create objects
+
+### 7.4 Scale Acquisition
+
+Scale information is obtained from Hive's `DecimalTypeInfo`, which is part of Hive's type system:
+
+- `DecimalTypeInfo.getScale()` returns the scale of the decimal column
+- Scale is passed to `parseDecimal()` as a parameter during deserialization
+
+---
+
+## 8. Usage
 
 ```sql
 -- Enable Fory shuffle (only affects Value serialization/deserialization)
@@ -244,10 +351,10 @@ SELECT * FROM t1 JOIN t2 ON t1.id = t2.id;
 
 ---
 
-## 8. Next Steps
+## 9. Next Steps
 
-1. **Actual performance testing**: Compare LazyBinary vs Fory performance
-2. **Arrow integration**: Leverage Fory's Arrow support for columnar analytics
-3. **Batch collect**: Reduce `collect()` call count (requires Tez framework support)
-4. **Complete Decimal zero-copy**: Parse Fory's decimal encoding
-5. **Union type support**: Fully implement Union zero-copy deserialization
+1. **Fix Decimal parsing**: Already completed - `parseDecimal()` correctly implemented
+2. **Add Union type support**: Implement complete Union deserialization (currently throws exception)
+3. **Actual performance testing**: Compare LazyBinary vs Fory real performance data
+4. **Arrow integration**: Leverage Fory's Arrow support for columnar analytics
+5. **Batch collect**: Reduce `collect()` call count (requires Tez framework support)

@@ -18,6 +18,8 @@
 
 package org.apache.hadoop.hive.serde2.fory;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -37,7 +39,10 @@ import org.apache.hadoop.hive.ql.exec.vector.StructColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.TimestampColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
+import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspector.PrimitiveCategory;
+import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
@@ -59,14 +64,33 @@ import org.apache.fory.format.row.binary.BinaryArray;
  */
 public class ForyShuffleVectorizedDeserializeRead {
 
+  private static final int DECIMAL_BYTE_LENGTH = 32;
+
   private final ForyShuffleSerDe serDe;
   private final BinaryRow binaryRow;
   private final int numFields;
+  private final int[] decimalScales;
   
   public ForyShuffleVectorizedDeserializeRead(ForyShuffleSerDe serDe) {
     this.serDe = serDe;
     this.binaryRow = new BinaryRow(serDe.getColumnTypes().size());
     this.numFields = serDe.getColumnTypes().size();
+    
+    this.decimalScales = new int[numFields];
+    List<TypeInfo> columnTypes = serDe.getColumnTypes();
+    for (int i = 0; i < numFields; i++) {
+      TypeInfo typeInfo = columnTypes.get(i);
+      if (typeInfo.getCategory() == Category.PRIMITIVE) {
+        PrimitiveTypeInfo pti = (PrimitiveTypeInfo) typeInfo;
+        if (pti.getPrimitiveCategory() == PrimitiveCategory.DECIMAL) {
+          decimalScales[i] = ((DecimalTypeInfo) pti).getScale();
+        } else {
+          decimalScales[i] = 0;
+        }
+      } else {
+        decimalScales[i] = 0;
+      }
+    }
   }
 
   public void setBinaryRow(byte[] data, int offset, int length) {
@@ -117,9 +141,7 @@ public class ForyShuffleVectorizedDeserializeRead {
         setStructColumnFromBinaryRow(cv, rowIndex, fieldIndex, (StructTypeInfo) typeInfo);
         break;
       case UNION:
-        // Union not fully supported yet
-        cv.isNull[rowIndex] = true;
-        break;
+        throw new HiveException("Union type is not supported in Fory shuffle deserialization");
       default:
         cv.isNull[rowIndex] = true;
         break;
@@ -178,12 +200,11 @@ public class ForyShuffleVectorizedDeserializeRead {
         ((TimestampColumnVector) cv).set(rowIndex, Timestamp.ofEpochMilli(tsMillis));
         break;
       case DECIMAL:
-        // Decimal is complex - stored as unscaled binary
         int decOffset = binaryRow.getFieldOffset(fieldIndex);
         int decLen = binaryRow.getFieldLength(fieldIndex);
         byte[] decBytes = binaryRow.getBytes();
-        // Parse decimal from bytes - this is not zero-copy
-        HiveDecimal decimal = parseDecimal(decBytes, decOffset, decLen);
+        int scale = decimalScales[fieldIndex];
+        HiveDecimal decimal = parseDecimal(decBytes, decOffset, decLen, scale);
         ((DecimalColumnVector) cv).vector[rowIndex] = new org.apache.hadoop.hive.common.type.HiveDecimalWritable(decimal);
         break;
       case INTERVAL_YEAR_MONTH:
@@ -290,8 +311,7 @@ public class ForyShuffleVectorizedDeserializeRead {
         cv.isNull[childIndex] = true;
         break;
       case UNION:
-        cv.isNull[childIndex] = true;
-        break;
+        throw new HiveException("Union type is not supported in Fory shuffle deserialization");
       default:
         cv.isNull[childIndex] = true;
         break;
@@ -343,10 +363,19 @@ public class ForyShuffleVectorizedDeserializeRead {
     }
   }
 
-  private HiveDecimal parseDecimal(byte[] bytes, int offset, int length) {
-    // Simplified decimal parsing - actual implementation depends on decimal encoding
-    // This is a placeholder
-    return HiveDecimal.ZERO;
+  private HiveDecimal parseDecimal(byte[] bytes, int offset, int length, int scale) {
+    if (length != DECIMAL_BYTE_LENGTH) {
+      return HiveDecimal.ZERO;
+    }
+    
+    byte[] littleEndianBytes = new byte[DECIMAL_BYTE_LENGTH];
+    for (int i = 0; i < DECIMAL_BYTE_LENGTH; i++) {
+      littleEndianBytes[i] = bytes[offset + DECIMAL_BYTE_LENGTH - 1 - i];
+    }
+    
+    BigInteger unscaledValue = new BigInteger(1, littleEndianBytes);
+    BigDecimal bd = new BigDecimal(unscaledValue, scale);
+    return HiveDecimal.create(bd);
   }
 
   public ForyShuffleSerDe getSerDe() {
