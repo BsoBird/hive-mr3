@@ -31,6 +31,8 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
 
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleConf;
+
 /**
  * This class is the UniformHash empty key operator class for native vectorized reduce sink.
  *
@@ -71,6 +73,84 @@ public class VectorReduceSinkEmptyKeyOperator extends VectorReduceSinkCommonOper
 
     isKeyInitialized = false;
 
+  }
+
+  @Override
+  public void process(Object row, int tag) throws HiveException {
+
+    try {
+
+      VectorizedRowBatch batch = (VectorizedRowBatch) row;
+
+      batchCounter++;
+
+      if (batch.size == 0) {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug(CLASS_NAME + " batch #" + batchCounter + " empty");
+        }
+        return;
+      }
+
+      if (!isKeyInitialized) {
+        isKeyInitialized = true;
+        Preconditions.checkState(isEmptyKey);
+        initializeEmptyKey(tag);
+      }
+
+      // Perform any value expressions.  Results will go into scratch columns.
+      if (reduceSinkValueExpressions != null) {
+        for (VectorExpression ve : reduceSinkValueExpressions) {
+          ve.evaluate(batch);
+        }
+      }
+
+      final int size = batch.size;
+      if (!isEmptyValue) {
+        boolean useFory = ForyShuffleConf.isEnabled(hconf);
+        
+        if (batch.selectedInUse) {
+          int[] selected = batch.selected;
+          for (int logical = 0; logical < size; logical++) {
+            final int batchIndex = selected[logical];
+
+            if (useFory && foryValueVectorizedSerializeWrite != null) {
+              foryValueVectorizedSerializeWrite.serializeFromVectorizedBatch(batch, batchIndex);
+              valueBytesWritable.set(foryValueVectorizedSerializeWrite.getBuffer(), 
+                  0, foryValueVectorizedSerializeWrite.getSerializedSize());
+            } else {
+              valueLazyBinarySerializeWrite.reset();
+              valueVectorSerializeRow.serializeWrite(batch, batchIndex);
+              valueBytesWritable.set(valueOutput.getData(), 0, valueOutput.getLength());
+            }
+
+            collect(keyWritable, valueBytesWritable);
+          }
+        } else {
+          for (int batchIndex = 0; batchIndex < size; batchIndex++) {
+
+            if (useFory && foryValueVectorizedSerializeWrite != null) {
+              foryValueVectorizedSerializeWrite.serializeFromVectorizedBatch(batch, batchIndex);
+              valueBytesWritable.set(foryValueVectorizedSerializeWrite.getBuffer(),
+                  0, foryValueVectorizedSerializeWrite.getSerializedSize());
+            } else {
+              valueLazyBinarySerializeWrite.reset();
+              valueVectorSerializeRow.serializeWrite(batch, batchIndex);
+              valueBytesWritable.set(valueOutput.getData(), 0, valueOutput.getLength());
+            }
+
+            collect(keyWritable, valueBytesWritable);
+          }
+        }
+      } else {
+
+        // Empty value, too.
+        for (int i = 0; i < size; i++) {
+          collect(keyWritable, valueBytesWritable);
+        }
+      }
+    } catch (Exception e) {
+      throw new HiveException(e);
+    }
   }
 
   @Override

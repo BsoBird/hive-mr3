@@ -75,6 +75,11 @@
       <version>${flatbuffers.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.fory</groupId>
+      <artifactId>fory-core</artifactId>
+      <version>${fory.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.avro</groupId>
       <artifactId>avro</artifactId>
     </dependency>

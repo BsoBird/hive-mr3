@@ -21,11 +21,13 @@ package org.apache.hadoop.hive.ql.exec.vector.reducesink;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizationContext;
+import org.apache.hadoop.hive.ql.exec.vector.keyseries.VectorKeySeriesForyMultiSerialized;
 import org.apache.hadoop.hive.ql.exec.vector.keyseries.VectorKeySeriesLongSerialized;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.VectorDesc;
 import org.apache.hadoop.hive.serde2.binarysortable.fast.BinarySortableSerializeWrite;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleConf;
 import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
 
 /*
@@ -69,8 +71,15 @@ public class VectorReduceSinkLongOperator extends VectorReduceSinkUniformHashOpe
     singleKeyColumn = reduceSinkKeyColumnMap[0];
     singleKeyColumnPrimitiveTypeInfo = (PrimitiveTypeInfo) reduceSinkKeyTypeInfos[0];
 
-    serializedKeySeries =
-        new VectorKeySeriesLongSerialized<BinarySortableSerializeWrite>(
-            singleKeyColumn, singleKeyColumnPrimitiveTypeInfo, keyBinarySortableSerializeWrite);
+    if (ForyShuffleConf.isEnabled(hconf) && foryKeyVectorizedSerializeWrite != null) {
+      VectorKeySeriesForyMultiSerialized forySerializedKeySeries =
+          new VectorKeySeriesForyMultiSerialized(foryKeyVectorizedSerializeWrite);
+      forySerializedKeySeries.init(reduceSinkKeyTypeInfos, reduceSinkKeyColumnMap);
+      serializedKeySeries = forySerializedKeySeries;
+    } else {
+      serializedKeySeries =
+          new VectorKeySeriesLongSerialized<BinarySortableSerializeWrite>(
+              singleKeyColumn, singleKeyColumnPrimitiveTypeInfo, keyBinarySortableSerializeWrite);
+    }
   }
 }

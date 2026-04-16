@@ -56,6 +56,11 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
 
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleConf;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleFactory;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleSerializeWrite;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleVectorizedSerializeWrite;
+
 /**
  * This class is common operator class for native vectorized reduce sink.
  */
@@ -111,6 +116,14 @@ public abstract class VectorReduceSinkCommonOperator extends TerminalOperator<Re
 
   // Lazy binary value serializer.
   protected transient LazyBinarySerializeWrite valueLazyBinarySerializeWrite;
+
+  // Fory shuffle key serializer (when enabled).
+  protected transient ForyShuffleSerializeWrite foryKeySerializeWrite;
+  protected transient ForyShuffleVectorizedSerializeWrite foryKeyVectorizedSerializeWrite;
+
+  // Fory shuffle value serializer (when enabled).
+  protected transient ForyShuffleSerializeWrite foryValueSerializeWrite;
+  protected transient ForyShuffleVectorizedSerializeWrite foryValueVectorizedSerializeWrite;
 
   // This helper object serializes LazyBinary format reducer values from columns of a row
   // in a vectorized row batch.
@@ -271,21 +284,51 @@ public abstract class VectorReduceSinkCommonOperator extends TerminalOperator<Re
     numRows = 0;
     cntr = 1;
 
+    boolean useForyShuffle = ForyShuffleConf.isEnabled(hconf);
+
     if (!isEmptyKey) {
-      keyBinarySortableSerializeWrite = BinarySortableSerializeWrite.with(
+      if (useForyShuffle) {
+        try {
+          foryKeySerializeWrite = ForyShuffleFactory.createKeySerializeWrite(conf, hconf);
+          foryKeyVectorizedSerializeWrite = new ForyShuffleVectorizedSerializeWrite(foryKeySerializeWrite.getSerDe());
+          LOG.info("Using Fory row format for shuffle key serialization");
+        } catch (Exception e) {
+          LOG.warn("Failed to initialize Fory key shuffle, falling back to BinarySortable", e);
+          keyBinarySortableSerializeWrite = BinarySortableSerializeWrite.with(
               conf.getKeySerializeInfo().getProperties(), reduceSinkKeyColumnMap.length);
+        }
+      } else {
+        keyBinarySortableSerializeWrite = BinarySortableSerializeWrite.with(
+                conf.getKeySerializeInfo().getProperties(), reduceSinkKeyColumnMap.length);
+      }
     }
 
     if (!isEmptyValue) {
-      valueLazyBinarySerializeWrite = new LazyBinarySerializeWrite(reduceSinkValueColumnMap.length);
+      if (useForyShuffle) {
+        try {
+          foryValueSerializeWrite = ForyShuffleFactory.createValueSerializeWrite(conf, hconf);
+          foryValueVectorizedSerializeWrite = new ForyShuffleVectorizedSerializeWrite(foryValueSerializeWrite.getSerDe());
+          LOG.info("Using Fory row format for shuffle value serialization");
+        } catch (Exception e) {
+          LOG.warn("Failed to initialize Fory value shuffle, falling back to LazyBinary", e);
+          valueLazyBinarySerializeWrite = new LazyBinarySerializeWrite(reduceSinkValueColumnMap.length);
+          valueVectorSerializeRow =
+              new VectorSerializeRow<LazyBinarySerializeWrite>(valueLazyBinarySerializeWrite);
+          valueVectorSerializeRow.init(reduceSinkValueTypeInfos, reduceSinkValueColumnMap);
+          valueOutput = new Output();
+          valueVectorSerializeRow.setOutput(valueOutput);
+        }
+      } else {
+        valueLazyBinarySerializeWrite = new LazyBinarySerializeWrite(reduceSinkValueColumnMap.length);
 
-      valueVectorSerializeRow =
-          new VectorSerializeRow<LazyBinarySerializeWrite>(
-              valueLazyBinarySerializeWrite);
-      valueVectorSerializeRow.init(reduceSinkValueTypeInfos, reduceSinkValueColumnMap);
+        valueVectorSerializeRow =
+            new VectorSerializeRow<LazyBinarySerializeWrite>(
+                valueLazyBinarySerializeWrite);
+        valueVectorSerializeRow.init(reduceSinkValueTypeInfos, reduceSinkValueColumnMap);
 
-      valueOutput = new Output();
-      valueVectorSerializeRow.setOutput(valueOutput);
+        valueOutput = new Output();
+        valueVectorSerializeRow.setOutput(valueOutput);
+      }
     }
 
     keyWritable = new HiveKey();

@@ -44,6 +44,9 @@ import org.apache.hadoop.hive.serde2.SerDeUtils;
 import org.apache.hadoop.hive.serde2.binarysortable.BinarySortableSerDe;
 import org.apache.hadoop.hive.serde2.binarysortable.fast.BinarySortableDeserializeRead;
 import org.apache.hadoop.hive.serde2.lazybinary.fast.LazyBinaryDeserializeRead;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleConf;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleSerDe;
+import org.apache.hadoop.hive.serde2.fory.ForyShuffleVectorizedDeserializeRead;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils;
@@ -94,6 +97,10 @@ public class ReduceRecordSource implements RecordSource {
   private VectorDeserializeRow<BinarySortableDeserializeRead> keyBinarySortableDeserializeToRow;
 
   private VectorDeserializeRow<LazyBinaryDeserializeRead> valueLazyBinaryDeserializeToRow;
+
+  // Fory shuffle deserializers (when enabled).
+  private ForyShuffleVectorizedDeserializeRead foryKeyDeserializeRead;
+  private ForyShuffleVectorizedDeserializeRead foryValueDeserializeRead;
 
   private VectorizedRowBatchCtx batchContext;
   private VectorizedRowBatch batch;
@@ -183,38 +190,54 @@ public class ReduceRecordSource implements RecordSource {
         batch = batchContext.createVectorizedRowBatch();
 
         // Setup vectorized deserialization for the key and value.
-        BinarySortableSerDe binarySortableSerDe = (BinarySortableSerDe) inputKeySerDe;
+        boolean useForyShuffle = ForyShuffleConf.isEnabled(jconf);
 
-        keyBinarySortableDeserializeToRow =
-            new VectorDeserializeRow<BinarySortableDeserializeRead>(
-                new BinarySortableDeserializeRead(
-                    VectorizedBatchUtil.typeInfosFromStructObjectInspector(
-                        keyStructInspector),
-                    (batchContext.getRowdataTypePhysicalVariations().length > firstValueColumnOffset)
-                        ? Arrays.copyOfRange(batchContext.getRowdataTypePhysicalVariations(), 0,
-                            firstValueColumnOffset)
-                        : batchContext.getRowdataTypePhysicalVariations(),
-                    /* useExternalBuffer */ true,
-                    binarySortableSerDe.getSortOrders(),
-                    binarySortableSerDe.getNullMarkers(),
-                    binarySortableSerDe.getNotNullMarkers()));
-        keyBinarySortableDeserializeToRow.init(0);
+        if (useForyShuffle && inputKeySerDe instanceof ForyShuffleSerDe) {
+          // Use Fory row format for shuffle deserialization
+          ForyShuffleSerDe foryKeySerDe = (ForyShuffleSerDe) inputKeySerDe;
+          foryKeyDeserializeRead = new ForyShuffleVectorizedDeserializeRead(foryKeySerDe);
 
-        final int valuesSize = valueStructInspectors.getAllStructFieldRefs().size();
-        if (valuesSize > 0) {
-          valueLazyBinaryDeserializeToRow =
-              new VectorDeserializeRow<LazyBinaryDeserializeRead>(
-                  new LazyBinaryDeserializeRead(
+          ForyShuffleSerDe foryValueSerDe = (ForyShuffleSerDe) inputValueSerDe;
+          foryValueDeserializeRead = new ForyShuffleVectorizedDeserializeRead(foryValueSerDe);
+
+          l4j.info("Using Fory row format for shuffle deserialization");
+        } else {
+          // Use BinarySortable/LazyBinary deserialization
+          BinarySortableSerDe binarySortableSerDe = (BinarySortableSerDe) inputKeySerDe;
+
+          keyBinarySortableDeserializeToRow =
+              new VectorDeserializeRow<BinarySortableDeserializeRead>(
+                  new BinarySortableDeserializeRead(
                       VectorizedBatchUtil.typeInfosFromStructObjectInspector(
-                          valueStructInspectors),
-                      (batchContext.getRowdataTypePhysicalVariations().length >= totalColumns)
-                          ? Arrays.copyOfRange(batchContext.getRowdataTypePhysicalVariations(),
-                              firstValueColumnOffset, totalColumns)
-                          : null,
-                      /* useExternalBuffer */ true));
-          valueLazyBinaryDeserializeToRow.init(firstValueColumnOffset);
+                          keyStructInspector),
+                      (batchContext.getRowdataTypePhysicalVariations().length > firstValueColumnOffset)
+                          ? Arrays.copyOfRange(batchContext.getRowdataTypePhysicalVariations(), 0,
+                              firstValueColumnOffset)
+                          : batchContext.getRowdataTypePhysicalVariations(),
+                      /* useExternalBuffer */ true,
+                      binarySortableSerDe.getSortOrders(),
+                      binarySortableSerDe.getNullMarkers(),
+                      binarySortableSerDe.getNotNullMarkers()));
+          keyBinarySortableDeserializeToRow.init(0);
 
-          // Create data buffers for value bytes column vectors.
+          final int valuesSize = valueStructInspectors.getAllStructFieldRefs().size();
+          if (valuesSize > 0) {
+            valueLazyBinaryDeserializeToRow =
+                new VectorDeserializeRow<LazyBinaryDeserializeRead>(
+                    new LazyBinaryDeserializeRead(
+                        VectorizedBatchUtil.typeInfosFromStructObjectInspector(
+                            valueStructInspectors),
+                        (batchContext.getRowdataTypePhysicalVariations().length >= totalColumns)
+                            ? Arrays.copyOfRange(batchContext.getRowdataTypePhysicalVariations(),
+                                firstValueColumnOffset, totalColumns)
+                            : null,
+                        /* useExternalBuffer */ true));
+            valueLazyBinaryDeserializeToRow.init(firstValueColumnOffset);
+          }
+        }
+
+        // Create data buffers for value bytes column vectors.
+        if (!useForyShuffle) {
           for (int i = firstValueColumnOffset; i < batch.numCols; i++) {
             ColumnVector colVector = batch.cols[i];
             if (colVector instanceof BytesColumnVector) {
