@@ -111,17 +111,13 @@ public abstract class VectorReduceSinkCommonOperator extends TerminalOperator<Re
   protected transient boolean reduceSkipTag;
   protected transient byte reduceTagByte;
 
-  // Binary sortable key serializer.
+  // Binary sortable key serializer (always BinarySortable for sort order correctness).
   protected transient BinarySortableSerializeWrite keyBinarySortableSerializeWrite;
 
   // Lazy binary value serializer.
   protected transient LazyBinarySerializeWrite valueLazyBinarySerializeWrite;
 
-  // Fory shuffle key serializer (when enabled).
-  protected transient ForyShuffleSerializeWrite foryKeySerializeWrite;
-  protected transient ForyShuffleVectorizedSerializeWrite foryKeyVectorizedSerializeWrite;
-
-  // Fory shuffle value serializer (when enabled).
+  // Fory shuffle value serializer (when enabled; key always uses BinarySortable).
   protected transient ForyShuffleSerializeWrite foryValueSerializeWrite;
   protected transient ForyShuffleVectorizedSerializeWrite foryValueVectorizedSerializeWrite;
 
@@ -286,23 +282,13 @@ public abstract class VectorReduceSinkCommonOperator extends TerminalOperator<Re
 
     boolean useForyShuffle = ForyShuffleConf.isEnabled(hconf);
 
+    // Key: always BinarySortable to preserve sort order
     if (!isEmptyKey) {
-      if (useForyShuffle) {
-        try {
-          foryKeySerializeWrite = ForyShuffleFactory.createKeySerializeWrite(conf, hconf);
-          foryKeyVectorizedSerializeWrite = new ForyShuffleVectorizedSerializeWrite(foryKeySerializeWrite.getSerDe());
-          LOG.info("Using Fory row format for shuffle key serialization");
-        } catch (Exception e) {
-          LOG.warn("Failed to initialize Fory key shuffle, falling back to BinarySortable", e);
-          keyBinarySortableSerializeWrite = BinarySortableSerializeWrite.with(
+      keyBinarySortableSerializeWrite = BinarySortableSerializeWrite.with(
               conf.getKeySerializeInfo().getProperties(), reduceSinkKeyColumnMap.length);
-        }
-      } else {
-        keyBinarySortableSerializeWrite = BinarySortableSerializeWrite.with(
-                conf.getKeySerializeInfo().getProperties(), reduceSinkKeyColumnMap.length);
-      }
     }
 
+    // Value: use Fory when enabled, otherwise LazyBinary
     if (!isEmptyValue) {
       if (useForyShuffle) {
         try {

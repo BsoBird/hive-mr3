@@ -28,7 +28,6 @@ import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.VectorDesc;
 import org.apache.hadoop.hive.serde2.ByteStream.Output;
-import org.apache.hadoop.hive.serde2.fory.ForyShuffleConf;
 import org.apache.hive.common.util.Murmur3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,39 +76,17 @@ public abstract class VectorReduceSinkUniformHashOperator extends VectorReduceSi
     super.initializeOp(hconf);
 
     Preconditions.checkState(!isEmptyKey);
-    
-    boolean useFory = ForyShuffleConf.isEnabled(hconf) && foryKeySerializeWrite != null;
-    
-    // Create all nulls key.
+    // Create all nulls key using BinarySortable (key always uses BinarySortable for sort order)
     try {
-      if (useFory) {
-        // For Fory, create all-nulls row and serialize it
-        Object[] nullRow = new Object[reduceSinkKeyColumnMap.length];
-        for (int i = 0; i < reduceSinkKeyColumnMap.length; i++) {
-          nullRow[i] = null;
-        }
-        // Fory serialization would go here
-        // For now, use BinarySortable as fallback for null key
-        Output nullKeyOutput = new Output();
-        keyBinarySortableSerializeWrite.set(nullKeyOutput);
-        for (int i = 0; i < reduceSinkKeyColumnMap.length; i++) {
-          keyBinarySortableSerializeWrite.writeNull();
-        }
-        int nullBytesLength = nullKeyOutput.getLength();
-        nullBytes = new byte[nullBytesLength];
-        System.arraycopy(nullKeyOutput.getData(), 0, nullBytes, 0, nullBytesLength);
-        nullKeyHashCode = Murmur3.hash32(nullBytes, 0, nullBytesLength, 0);
-      } else {
-        Output nullKeyOutput = new Output();
-        keyBinarySortableSerializeWrite.set(nullKeyOutput);
-        for (int i = 0; i < reduceSinkKeyColumnMap.length; i++) {
-          keyBinarySortableSerializeWrite.writeNull();
-        }
-        int nullBytesLength = nullKeyOutput.getLength();
-        nullBytes = new byte[nullBytesLength];
-        System.arraycopy(nullKeyOutput.getData(), 0, nullBytes, 0, nullBytesLength);
-        nullKeyHashCode = Murmur3.hash32(nullBytes, 0, nullBytesLength, 0);
+      Output nullKeyOutput = new Output();
+      keyBinarySortableSerializeWrite.set(nullKeyOutput);
+      for (int i = 0; i < reduceSinkKeyColumnMap.length; i++) {
+        keyBinarySortableSerializeWrite.writeNull();
       }
+      int nullBytesLength = nullKeyOutput.getLength();
+      nullBytes = new byte[nullBytesLength];
+      System.arraycopy(nullKeyOutput.getData(), 0, nullBytes, 0, nullBytesLength);
+      nullKeyHashCode = Murmur3.hash32(nullBytes, 0, nullBytesLength, 0);
     } catch (Exception e) {
       throw new HiveException(e);
     }

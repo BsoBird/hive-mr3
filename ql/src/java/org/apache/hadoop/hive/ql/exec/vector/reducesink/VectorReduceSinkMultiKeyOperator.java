@@ -21,30 +21,22 @@ package org.apache.hadoop.hive.ql.exec.vector.reducesink;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizationContext;
-import org.apache.hadoop.hive.ql.exec.vector.keyseries.VectorKeySeriesForyMultiSerialized;
 import org.apache.hadoop.hive.ql.exec.vector.keyseries.VectorKeySeriesMultiSerialized;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.VectorDesc;
 import org.apache.hadoop.hive.serde2.binarysortable.fast.BinarySortableSerializeWrite;
-import org.apache.hadoop.hive.serde2.fory.ForyShuffleConf;
-import org.apache.hadoop.hive.serde2.fory.ForyShuffleVectorizedSerializeWrite;
 
 /*
  * Specialized class for native vectorized reduce sink that is reducing on Uniform Hash
  * multiple key columns (or a single non-long / non-string column).
+ * 
+ * Key always uses BinarySortableSerDe to preserve sort order.
+ * Value may use Fory when hive.fory.shuffle.enabled=true.
  */
 public class VectorReduceSinkMultiKeyOperator extends VectorReduceSinkUniformHashOperator {
 
   private static final long serialVersionUID = 1L;
-
-  // The above members are initialized by the constructor and must not be
-  // transient.
-  //---------------------------------------------------------------------------
-
-  //---------------------------------------------------------------------------
-  // Pass-thru constructors.
-  //
 
   /** Kryo ctor. */
   protected VectorReduceSinkMultiKeyOperator() {
@@ -64,17 +56,11 @@ public class VectorReduceSinkMultiKeyOperator extends VectorReduceSinkUniformHas
   protected void initializeOp(Configuration hconf) throws HiveException {
     super.initializeOp(hconf);
 
-    if (ForyShuffleConf.isEnabled(hconf) && foryKeyVectorizedSerializeWrite != null) {
-      VectorKeySeriesForyMultiSerialized forySerializedMultiKeySeries =
-          new VectorKeySeriesForyMultiSerialized(foryKeyVectorizedSerializeWrite);
-      forySerializedMultiKeySeries.init(reduceSinkKeyTypeInfos, reduceSinkKeyColumnMap);
-      serializedKeySeries = forySerializedMultiKeySeries;
-    } else {
-      VectorKeySeriesMultiSerialized<BinarySortableSerializeWrite> serializedMultiKeySeries =
-          new VectorKeySeriesMultiSerialized<BinarySortableSerializeWrite>(
-              keyBinarySortableSerializeWrite);
-      serializedMultiKeySeries.init(reduceSinkKeyTypeInfos, reduceSinkKeyColumnMap);
-      serializedKeySeries = serializedMultiKeySeries;
-    }
+    // Key always uses BinarySortable to preserve sort order
+    VectorKeySeriesMultiSerialized<BinarySortableSerializeWrite> serializedMultiKeySeries =
+        new VectorKeySeriesMultiSerialized<BinarySortableSerializeWrite>(
+            keyBinarySortableSerializeWrite);
+    serializedMultiKeySeries.init(reduceSinkKeyTypeInfos, reduceSinkKeyColumnMap);
+    serializedKeySeries = serializedMultiKeySeries;
   }
 }

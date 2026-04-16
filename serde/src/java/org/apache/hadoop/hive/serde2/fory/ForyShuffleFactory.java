@@ -144,19 +144,8 @@ public class ForyShuffleFactory {
   }
 
   /**
-   * Creates a SerializeWrite for key shuffle.
-   */
-  public static ForyShuffleSerializeWrite createKeySerializeWrite(
-      ReduceSinkDesc conf, Configuration hconf) throws SerDeException {
-    TableDesc tableDesc = conf.getKeySerializeInfo();
-    Properties props = tableDesc.getProperties();
-    ForyShuffleSerDe forySerDe = new ForyShuffleSerDe();
-    forySerDe.initialize(hconf, props, new Properties());
-    return new ForyShuffleSerializeWrite(forySerDe);
-  }
-
-  /**
-   * Creates a SerializeWrite for value shuffle.
+   * Creates a SerializeWrite for value shuffle using Fory.
+   * Key always uses BinarySortableSerDe to preserve sort order.
    */
   public static ForyShuffleSerializeWrite createValueSerializeWrite(
       ReduceSinkDesc conf, Configuration hconf) throws SerDeException {
