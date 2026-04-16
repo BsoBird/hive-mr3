@@ -101,6 +101,7 @@ public class ReduceRecordSource implements RecordSource {
   // Fory shuffle deserializers (when enabled).
   private ForyShuffleVectorizedDeserializeRead foryKeyDeserializeRead;
   private ForyShuffleVectorizedDeserializeRead foryValueDeserializeRead;
+  private boolean useForyShuffle;
 
   private VectorizedRowBatchCtx batchContext;
   private VectorizedRowBatch batch;
@@ -190,7 +191,7 @@ public class ReduceRecordSource implements RecordSource {
         batch = batchContext.createVectorizedRowBatch();
 
         // Setup vectorized deserialization for the key and value.
-        boolean useForyShuffle = ForyShuffleConf.isEnabled(jconf);
+        useForyShuffle = ForyShuffleConf.isEnabled(jconf);
 
         if (useForyShuffle && inputKeySerDe instanceof ForyShuffleSerDe) {
           // Use Fory row format for shuffle deserialization
@@ -459,14 +460,20 @@ public class ReduceRecordSource implements RecordSource {
     // l4j.info("ReduceRecordSource processVectorGroup keyBytes " + keyLength + " " +
     //     VectorizedBatchUtil.displayBytes(keyBytes, 0, keyLength));
 
-    keyBinarySortableDeserializeToRow.setBytes(keyBytes, 0, keyLength);
-    try {
-      keyBinarySortableDeserializeToRow.deserialize(batch, 0);
-    } catch (Exception e) {
-      throw new HiveException(
-          "\nDeserializeRead details: " +
-              keyBinarySortableDeserializeToRow.getDetailedReadPositionString(),
-          e);
+    if (useForyShuffle && foryKeyDeserializeRead != null) {
+      // Use Fory zero-copy deserialization for key
+      foryKeyDeserializeRead.setBinaryRow(keyBytes, 0, keyLength);
+      foryKeyDeserializeRead.deserializeToVectorizedBatch(batch, 0);
+    } else {
+      keyBinarySortableDeserializeToRow.setBytes(keyBytes, 0, keyLength);
+      try {
+        keyBinarySortableDeserializeToRow.deserialize(batch, 0);
+      } catch (Exception e) {
+        throw new HiveException(
+            "\nDeserializeRead details: " +
+                keyBinarySortableDeserializeToRow.getDetailedReadPositionString(),
+            e);
+      }
     }
     for(int i = 0; i < firstValueColumnOffset; i++) {
       VectorizedBatchUtil.setRepeatingColumn(batch, i);
@@ -504,15 +511,21 @@ public class ReduceRecordSource implements RecordSource {
           rowIdx = 0;
           batchBytes = keyBytes.length;
         }
-        if (valueLazyBinaryDeserializeToRow != null) {
+        if (valueLazyBinaryDeserializeToRow != null || (useForyShuffle && foryValueDeserializeRead != null)) {
           // Deserialize value into vector row columns.
           BytesWritable valueWritable = (BytesWritable) value;
           byte[] valueBytes = valueWritable.getBytes();
           int valueLength = valueWritable.getLength();
           batchBytes += valueLength;
 
-          valueLazyBinaryDeserializeToRow.setBytes(valueBytes, 0, valueLength);
-          valueLazyBinaryDeserializeToRow.deserialize(batch, rowIdx);
+          if (useForyShuffle && foryValueDeserializeRead != null) {
+            // Use Fory zero-copy deserialization for value
+            foryValueDeserializeRead.setBinaryRow(valueBytes, 0, valueLength);
+            foryValueDeserializeRead.deserializeToVectorizedBatch(batch, rowIdx);
+          } else {
+            valueLazyBinaryDeserializeToRow.setBytes(valueBytes, 0, valueLength);
+            valueLazyBinaryDeserializeToRow.deserialize(batch, rowIdx);
+          }
         }
         rowIdx++;
       }
